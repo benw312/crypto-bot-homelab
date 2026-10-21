@@ -17,6 +17,12 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "password")
 MODEL_FILE = 'model.joblib'
 SYMBOLS = ['BTC/USDT', 'ETH/USDT']
 
+# Model definition, shared with evaluate.py so the evaluation scores exactly
+# the model this service runs
+FEATURES = ['rsi', 'macd', 'macd_signal', 'macd_hist', 'bb_upper', 'bb_middle', 'bb_lower', 'volume']
+HORIZON_MINUTES = 60    # ingestion writes one row per minute, so 60 rows = 1 hour
+RISE_THRESHOLD = 0.01   # target: price more than 1% higher one hour later
+
 async def get_db_pool():
     return await asyncpg.create_pool(
         user=DB_USER,
@@ -58,6 +64,23 @@ def calculate_indicators(df):
     
     return df
 
+def add_target(df):
+    """
+    Return a copy of df with a 'target' column: 1 if the price is more than
+    RISE_THRESHOLD higher HORIZON_MINUTES rows later, else 0.
+
+    The final HORIZON_MINUTES rows have no future price yet, so their target is
+    NaN rather than 0 - labelling them "no rise" would invent false negatives.
+    """
+    future_price = df['price'].shift(-HORIZON_MINUTES)
+    target = (future_price > df['price'] * (1 + RISE_THRESHOLD)).astype(float)
+    return df.assign(target=target.where(future_price.notna()))
+
+
+def build_model():
+    return RandomForestClassifier(n_estimators=100, random_state=42)
+
+
 def train_or_load_model(df):
     """
     Load the model if it exists, otherwise train a new one.
@@ -70,22 +93,15 @@ def train_or_load_model(df):
         return joblib.load(MODEL_FILE)
     
     print("Training new model...")
-    future_close = df['price'].shift(-60)
-    df['target'] = (future_close > df['price'] * 1.01).astype(int)
-    
     # Drop warm-up rows (MACD needs ~33) and the final hour (no future price yet)
-    train_df = df.dropna()
+    train_df = add_target(df).dropna()
     
     if len(train_df) < 10:
         print("Not enough data to train.")
         return None
 
-    features = ['rsi', 'macd', 'macd_signal', 'macd_hist', 'bb_upper', 'bb_middle', 'bb_lower', 'volume']
-    X = train_df[features]
-    y = train_df['target']
-    
-    clf = RandomForestClassifier(n_estimators=100, random_state=42)
-    clf.fit(X, y)
+    clf = build_model()
+    clf.fit(train_df[FEATURES], train_df['target'].astype(int))
     
     joblib.dump(clf, MODEL_FILE)
     print("Model saved.")
@@ -98,13 +114,11 @@ def predict_signal(model, df):
     # Predict on the latest row
     latest_row = df.iloc[[-1]] 
     # Ensure no NaNs in latest features (indicators should be calculable if we have 500 rows)
-    features = ['rsi', 'macd', 'macd_signal', 'macd_hist', 'bb_upper', 'bb_middle', 'bb_lower', 'volume']
-    
-    if latest_row[features].isnull().values.any():
+    if latest_row[FEATURES].isnull().values.any():
         print("Latest row has NaN features. Cannot predict.")
         return None
         
-    X_new = latest_row[features]
+    X_new = latest_row[FEATURES]
     if 1 not in model.classes_:
         # Training window never saw a >1% rise, so there is no "rise" class to score
         print("Model was trained on a single class. Cannot score a rise probability.")
