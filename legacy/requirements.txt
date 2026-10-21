@@ -1,0 +1,10 @@
+requests
+pycoingecko
+praw
+textblob
+tweepy
+vaderSentiment
+influxdb
+boto3
+schedule
+psutil

@@ -1,0 +1,67 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg14
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-password}
+      - POSTGRES_DB=crypto
+    volumes:
+      - ./data/timescaledb:/var/lib/postgresql/data
+      - ./migrations/001_init_hypertables.sql:/docker-entrypoint-initdb.d/001_init_hypertables.sql
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Service 1: Ingestion Engine (Logs Data)
+  ingestion:
+    build: ./app
+    container_name: crypto_ingestion
+    command: python ingestion.py
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    environment:
+      - DB_HOST=timescaledb
+      - DB_NAME=crypto
+      - DB_USER=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-password}
+    volumes:
+      - ./app:/app
+
+  # Service 2: Analysis Module (Generates Signals)
+  analysis:
+    build: ./app
+    container_name: crypto_analysis
+    command: python analysis.py
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    environment:
+      - DB_HOST=timescaledb
+      - DB_NAME=crypto
+      - DB_USER=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-password}
+    volumes:
+      - ./app:/app
+
+  # Service 3: Frontend Dashboard (User Interface)
+  dashboard:
+    build: ./app
+    container_name: crypto_dashboard
+    command: streamlit run dashboard.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    environment:
+      - DB_HOST=timescaledb
+      - DB_NAME=crypto
+      - DB_USER=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-password}
+    volumes:
+      - ./app:/app

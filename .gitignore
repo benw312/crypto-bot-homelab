@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+data/
+*.db
+*.joblib
+backtest_results.html
+.DS_Store
