@@ -155,3 +155,7 @@ from environment variables (see `.env.example`).
 - **The model target is deliberately simple** (a >1% rise within an hour). In a
   quiet market a 500-minute window may contain no rises at all, in which case
   the service skips the signal rather than guessing.
+
+## License
+
+[MIT](LICENSE) © 2026 Ben Wallbridge
