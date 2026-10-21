@@ -1,5 +1,8 @@
 # Crypto Bot Homelab
 
+[![tests](https://github.com/benw312/crypto-bot-homelab/actions/workflows/tests.yml/badge.svg)](https://github.com/benw312/crypto-bot-homelab/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A containerised crypto market-data platform that runs on a home server. It
 ingests live BTC and ETH prices every minute into a time-series database,
 computes technical indicators, trains a machine-learning signal model per
