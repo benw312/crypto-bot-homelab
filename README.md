@@ -30,13 +30,18 @@ ccxt · TA-Lib · scikit-learn · Backtrader · Streamlit · Plotly · pandas
 - **ML signal generation.** The analysis service computes RSI, MACD and
   Bollinger Bands with TA-Lib, then trains a Random Forest per asset to predict
   whether the price will rise more than 1% in the next hour.
+- **Evaluated on unseen data.** An evaluation script trains on three weeks of
+  history and tests on the following nine days. It reports precision and
+  recall against the base rate, plus a fee-inclusive back-test of the model's
+  signals against simple baselines. See [Model evaluation](#model-evaluation).
 - **Backtesting.** A Backtrader strategy combines RSI with a sentiment
   threshold and plots trades on an interactive Plotly chart.
 - **Dashboard and paper trading.** A Streamlit UI shows price against moving
   averages and lets you simulate buys and sells against a virtual wallet.
 - **Tested.** Unit tests cover ingestion, indicators, model training and
-  prediction, the backtest flow and the dashboard's data layer, with network
-  and database calls mocked.
+  prediction, the evaluation's train/test split, metrics and back-test, the
+  backtest flow and the dashboard's data layer, with network and database
+  calls mocked.
 
 ## Screenshots
 
@@ -62,7 +67,60 @@ flowchart LR
 | `crypto_analysis` | `app/analysis.py` | Every 15 minutes, computes indicators over the last 500 minutes and trains or loads a model per symbol to score the latest candle. |
 | `crypto_dashboard` | `app/dashboard.py` | Streamlit UI on port 8501. |
 
-`app/backtest.py` and `app/backfill.py` are run on demand (see below).
+`app/backtest.py`, `app/backfill.py` and `app/evaluate.py` are run on demand (see below).
+
+## Model evaluation
+
+`app/evaluate.py` measures how well the model would have done on data it never
+saw. It uses the same features, target and settings as the live service.
+
+**Method.** I loaded 30 days of 1-minute Binance candles (2026-09-21 to
+2026-10-21). The model trained on the first 70% and was tested on the last 30%,
+about nine days. A one-hour gap separates the two, because each training label
+looks an hour ahead and would otherwise use test-period prices. The indicators
+only look backwards, so they can't leak future information either.
+
+| Test set (unseen) | BTC/USDT | ETH/USDT |
+|---|---|---|
+| Base rate: minutes followed by a >1% rise | 1.4% | 2.9% |
+| Rise predictions made | 57 | 4,809 |
+| Precision | 49.1% | 5.3% |
+| Recall | 15.6% | 68.3% |
+| ROC AUC (0.5 = chance) | 0.655 | 0.671 |
+
+| Back-test on the same nine days (buy on signal, sell after 1 hour, 0.1% fee per side) | BTC/USDT | ETH/USDT |
+|---|---|---|
+| Model signals | +1.28% (3 trades) | −11.17% (87 trades) |
+| Baseline: trade every hour | −34.87% (215 trades) | −37.27% (215 trades) |
+| Buy and hold | −0.27% | −4.15% |
+
+**What this shows:**
+
+- **The model ranks minutes better than chance, but only modestly.** An ROC
+  AUC of about 0.66 for both coins means it orders likely rises above unlikely
+  ones more often than not.
+- **The BTC precision is too thin to rely on.** Its 57 predictions cluster into
+  only 3 separate trades. That isn't enough evidence for the 49% figure to
+  mean much.
+- **On ETH the model over-predicts.** It flags a rise in 37% of minutes, and is
+  right 5.3% of the time against a 2.9% base rate. The likely cause is the
+  Bollinger Band features: they are raw price levels, so a tree model handles
+  prices outside its training range badly. Turning them into scale-free ratios
+  (for example %B) is the obvious next experiment.
+- **Neither model beats buy-and-hold after fees.** The model's signals do lose
+  far less than trading blindly every hour, which shows the filtering adds
+  something. But at 0.2% per round trip, the fees outweigh the edge.
+
+All figures come from one nine-day test window and will change when re-run on
+newer data. A walk-forward evaluation across several windows would give a more
+reliable estimate.
+
+To reproduce:
+
+```bash
+docker compose run --rm ingestion python backfill.py --hours 720
+docker compose run --rm analysis python evaluate.py
+```
 
 ## Getting started
 
@@ -117,6 +175,7 @@ python -m unittest discover tests
 │   ├── dashboard.py        # Streamlit UI and paper trading
 │   ├── backtest.py         # Backtrader strategy and Plotly report
 │   ├── backfill.py         # One-off historical data loader
+│   ├── evaluate.py         # Held-out model evaluation and signal back-test
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── migrations/             # TimescaleDB schema (hypertables)
@@ -158,6 +217,11 @@ from environment variables (see `.env.example`).
 - **The model target is deliberately simple** (a >1% rise within an hour). In a
   quiet market a 500-minute window may contain no rises at all, in which case
   the service skips the signal rather than guessing.
+- **The live service trains on a much shorter window than the evaluation.** It
+  trains once, on the most recent 500 minutes, and then reuses that model. The
+  evaluation trains on three weeks of history, so it measures the modelling
+  approach rather than the exact model the service is running. Scheduled
+  retraining on a longer window is the next step.
 
 ## License
 

@@ -17,10 +17,11 @@ class TestAnalysis(unittest.TestCase):
     def setUp(self):
         # Create a sample DataFrame with enough data for indicators
         # RSI needs 14, MACD needs 26+9=35, BB needs 20.
-        # Let's create 100 rows
-        dates = pd.date_range(start='2021-01-01', periods=100, freq='15min')
-        prices = np.linspace(100, 200, 100) + np.random.normal(0, 1, 100)
-        self.df = pd.DataFrame({'time': dates, 'price': prices, 'volume': np.random.rand(100)})
+        # Training also drops the final hour (60 rows, no future price yet), so
+        # 200 rows leaves ~100 labelled rows after the indicator warm-up
+        dates = pd.date_range(start='2021-01-01', periods=200, freq='1min')
+        prices = np.linspace(100, 200, 200) + np.random.normal(0, 1, 200)
+        self.df = pd.DataFrame({'time': dates, 'price': prices, 'volume': np.random.rand(200)})
 
     def test_calculate_indicators(self):
         # This uses REAL TA-Lib
